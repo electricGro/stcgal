@@ -1081,12 +1081,14 @@ class Stc15AProtocol(Stc12Protocol):
         self.write_packet(packet)
         self.pulse(timeout=1.0)
         response = self.read_packet()
-        if response[0] != 0x65:
+        if len(response) < 37 or response[0] != 0x65:
             raise StcProtocolException("incorrect magic in handshake packet")
 
         # determine programming speed trim value
         target_trim_a, target_count_a = struct.unpack(">HH", response[28:32])
         target_trim_b, target_count_b = struct.unpack(">HH", response[32:36])
+        if target_count_a == target_count_b:
+            raise StcProtocolException("frequency trimming failed")
         m = (target_trim_b - target_trim_a) / (target_count_b - target_count_a)
         n = target_trim_a - m * target_count_a
         program_trim = round(m * program_count + n)
@@ -1108,6 +1110,8 @@ class Stc15AProtocol(Stc12Protocol):
             target_count_a = count_a
             target_count_b = count_b
         # linear interpolate to find range to try next
+        if target_count_a == target_count_b:
+            raise StcProtocolException("frequency trimming failed")
         m = (target_trim_b - target_trim_a) / (target_count_b - target_count_a)
         n = target_trim_a - m * target_count_a
         target_trim = round(m * user_count + n)
@@ -1231,6 +1235,8 @@ class Stc15Protocol(Stc15AProtocol):
         calib_data = response[2:]
         challenge_data = packet[2:]
         calib_len = response[1]
+        if len(calib_data) < 2 * calib_len:
+            raise StcProtocolException("range calibration data missing")
 
         for i in range(calib_len - 1):
             count_a, count_b = struct.unpack(">HH", calib_data[2*i:2*i+4])
@@ -1251,6 +1257,8 @@ class Stc15Protocol(Stc15AProtocol):
         calib_data = response[2:]
         challenge_data = packet[2:]
         calib_len = response[1]
+        if len(calib_data) < 2 * calib_len:
+            raise StcProtocolException("trim calibration data missing")
 
         best = None
         best_count = sys.maxsize
@@ -1260,6 +1268,9 @@ class Stc15Protocol(Stc15AProtocol):
             if abs(count - target_count) < best_count:
                 best_count = abs(count - target_count)
                 best = (trim_adj, trim_range), count
+
+        if not best:
+            raise StcProtocolException("frequency trimming failed")
 
         return best
 
